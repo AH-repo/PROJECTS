@@ -205,23 +205,8 @@ void UART_DMA::init() {
     } else if (m_dma == DMA2) {
         RCC->AHB1ENR |= RCC_AHB1ENR_DMA2EN;
     }
-    //tx dla dma
-    DMA_Stream_TypeDef* txStream = reinterpret_cast<DMA_Stream_TypeDef*>(m_dma_stream_tx);
-    txStream->CR = 0; 
-    txStream->PAR = reinterpret_cast<uint32_t>(&m_UART->DR); 
-    txStream->CR |= (m_dma_channel_tx << DMA_SxCR_CHSEL_Pos); 
-    txStream->CR |= DMA_SxCR_MINC; 
-    txStream->CR |= DMA_SxCR_DIR_0; 
-    txStream->CR |= DMA_SxCR_PL_1;
 
-    //rx dla dma
-    DMA_Stream_TypeDef* rxStream = reinterpret_cast<DMA_Stream_TypeDef*>(m_dma_stream_rx);
-    rxStream->CR = 0; 
-    rxStream->PAR = reinterpret_cast<uint32_t>(&m_UART->DR); 
-    rxStream->CR |= (m_dma_channel_rx << DMA_SxCR_CHSEL_Pos);  
-    rxStream->CR |= DMA_SxCR_MINC;  
-    rxStream->CR |= DMA_SxCR_PL_1;  
-    //KONIEC INITA DMA
+    
 
 
     //Odpalenie clocka dla gpio
@@ -231,14 +216,49 @@ void UART_DMA::init() {
         RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
     } else if (m_RX_Port == GPIOC || m_TX_Port == GPIOC) {
         RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
+    } else if (m_RX_Port == GPIOD || m_TX_Port == GPIOD) {
+        RCC->AHB1ENR |= RCC_AHB1ENR_GPIODEN;
     }
 
     //podpięcie rxa i txa pod gpio
-    m_RX_Port->MODER |= (2U << (m_RX_Pin * 2)); 
-    m_TX_Port->MODER |= (2U << (u_conf.TX_Pin * 2)); 
+    m_CS_Port->MODER &= ~(0x3 << (m_TX_Pin*2));     // Clear MODE setting
+    m_CS_Port->MODER |= (0x2 << (m_TX_Pin*2));      // Output MODE   
 
-    m_RX_Port->AFR[m_RX_Pin / 8] |= (7U << ((m_RX_Pin % 8) * 4)); 
-    m_TX_Port->AFR[u_conf.TX_Pin / 8] |= (7U << ((u_conf.TX_Pin % 8) * 4)); 
+    
+    if(m_TX_Pin < 8){
+        m_TX_Port->AFR[0]    &=      ~(0xf << (m_TX_Pin*4));
+        if(m_UART = USART1 ||m_UART = USART2 ||m_UART = USART3){
+            m_TX_Port->AFR[0]    |=      (0x7 << (m_TX_Pin*4));
+        }else{
+            m_TX_Port->AFR[0]    |=      (0x8 << (m_TX_Pin*4));
+        }
+    }else{
+        m_TX_Port->AFR[1]     &=     ~(0xf << ((m_TX_Pin-8)*4));
+        if(m_UART = USART1 ||m_UART = USART2 ||m_UART = USART3){
+            m_TX_Port->AFR[1]    |=      (0x7 << (m_TX_Pin-8)*4);
+        }else{
+            m_TX_Port->AFR[1]    |=      (0x8 << (m_TX_Pin-8)*4);
+        }
+    }
+    
+
+    if(m_RX_Pin < 8){
+        m_RX_Port->AFR[0]    &=      ~(0xf << (m_RX_Pin*4));
+        if(m_UART = USART1 ||m_UART = USART2 ||m_UART = USART3){
+            m_RX_Port->AFR[0]    |=      (0x7 << (m_RX_Pin*4));
+        }else{
+            m_RX_Port->AFR[0]    |=      (0x8 << (m_RX_Pin*4));
+        }
+    }else{
+        m_RX_Port->AFR[1]     &=     ~(0xf << ((m_RX_Pin-8)*4));
+        if(m_UART = USART1 ||m_UART = USART2 ||m_UART = USART3){
+            m_RX_Port->AFR[1]    |=      (0x7 << (m_RX_Pin-8)*4);
+        }else{
+            m_RX_Port->AFR[1]    |=      (0x8 << (m_RX_Pin-8)*4);
+        }
+    }
+    
+
 
     m_RX_Port->OSPEEDR |= (3U << (m_RX_Pin * 2));
     m_TX_Port->OSPEEDR |= (3U << (u_conf.TX_Pin * 2));
@@ -259,10 +279,12 @@ void UART_DMA::init() {
         RCC->APB1ENR |= RCC_APB1ENR_UART5EN;
     }
 
-    if (m_BR == 0 || m_UART == nullptr) {
-        return -1
+    if (m_BR == 0) {
+         printf("Wrong BR");
+        __disable_irq();
+        while(1);
     }
-    const uint32_t over8 = 0; 
+
     
     if (m_UART == USART1) {
         clock = 9000000;
@@ -271,14 +293,20 @@ void UART_DMA::init() {
         clock = 4500000;
     }
 
-    uint32_t usartdiv = clock / (m_BR * (16 >> over8));
-    uint32_t mantissa = usartdiv / 16; 
-    uint32_t fraction = usartdiv % 16; 
+    double usartdiv = clock / (m_BR * (16));
+    uint16_t mantissa = static_cast<uint16_t>(usartdiv / 16);  
+    if(((usartdiv - mantissa)*16)-(static_cast<uint8_t>((usartdiv - mantissa)*16)) >= 0.5){
+        uint8_t fraction = static_cast<uint8_t>((usartdiv - mantissa)*16+1); 
+    }else{
+    uint8_t fraction = static_cast<uint8_t>((usartdiv - mantissa)*16); 
+    };
 
     if (mantissa == 0 || mantissa > 0xFFF) {
-        return -1
+        printf("Wrong BR");
+         __disable_irq();
+        while(1);
     }
-    m_UART->BRR = (mantissa << 4) | fraction; 
+    m_UART->BRR = mantissa << 4 | fraction; 
 
 
     m_UART->CR1 |= USART_CR1_TE | USART_CR1_RE;
@@ -296,9 +324,6 @@ void UART_DMA::init() {
     txStream->PAR = reinterpret_cast<uint32_t>(&m_UART->DR); 
     txStream->CR = (m_dma_channel_tx << DMA_SxCR_CHSEL_Pos) | DMA_SxCR_MINC | DMA_SxCR_DIR_0;
     txStream->CR |= DMA_SxCR_EN; 
-
-    while (!(m_UART->SR & USART_SR_TC)); 
-    return true;
 }
 }
 
@@ -320,9 +345,10 @@ void UART_DMA::transmit(const uint8_t* txData, uint16_t size) {
 
     // Konfiguracja trybu DMA
     m_dma_stream_tx->CR &= ~DMA_SxCR_DIR; // Kierunek: pamięć -> peryferium
+    m_dma_stream_tx->CR |= DMA_SxCR_DIR_1; // Kierunek: pamięć -> peryferium
     m_dma_stream_tx->CR |= DMA_SxCR_MINC; // Inkrementacja adresu pamięci
     m_dma_stream_tx->CR &= ~DMA_SxCR_PINC; // Brak inkrementacji adresu peryferium
-    m_dma_stream_tx->CR |= DMA_SxCR_TCIE; // Włącz przerwania zakończenia transferu
+
 
     // Włącz DMA Stream
     m_dma_stream_tx->CR |= DMA_SxCR_EN;
@@ -349,7 +375,7 @@ void UART_DMA::receive(uint8_t* rxData, uint16_t size) {
     m_dma_stream_rx->CR &= ~DMA_SxCR_DIR; // Peryferium -> pamięć
     m_dma_stream_rx->CR |= DMA_SxCR_MINC; // Inkrementacja adresu pamięci
     m_dma_stream_rx->CR &= ~DMA_SxCR_PINC; // Brak inkrementacji adresu peryferium
-    m_dma_stream_rx->CR |= DMA_SxCR_TCIE; // Włącz przerwania zakończenia transferu
+
 
     //Stream Enable
     m_dma_stream_rx->CR |= DMA_SxCR_EN;
