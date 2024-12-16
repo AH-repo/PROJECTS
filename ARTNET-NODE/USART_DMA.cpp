@@ -1,18 +1,7 @@
 #pragma once
 #include "UART_DMA.hpp"
 
-UART_DMA::UART_DMA(const uart_config& u_conf)
-    : m_UART(u_conf.UART), 
-      m_dma(u_conf.dma),
-      m_dma_stream_tx(u_conf.dma_stream_tx),
-      m_dma_stream_rx(u_conf.dma_stream_rx),
-      m_dma_channel_tx(u_conf.dma_channel_tx),
-      m_dma_channel_rx(u_conf.dma_channel_rx),
-      m_BR(u_conf.BR),
-      m_RX_Port(u_conf.RX_Port),
-      m_RX_Pin(u_conf.RX_Pin),
-      m_TX_Port(u_conf.TX_Port),
-      m_TX_Pin(u_conf.TX_Pin) {
+UART_DMA::UART_DMA(const uart_config& u_conf) : m_TX_busy(true), m_RX_busy(true)  {
             // UART1: PA9 (TX), PA10 (RX) lub PB6 (TX), PB7 (RX)
      if (u_conf.UART == USART1) {
         if ((((u_conf.TX_Port == GPIOA && u_conf.TX_Pin == 9) || (u_conf.TX_Port == GPIOB && u_conf.TX_Pin == 6)) &&
@@ -296,7 +285,7 @@ void UART_DMA::init() {
     m_UART->CR3 |= USART_CR3_DMAT | USART_CR3_DMAR;
     m_UART->CR1 |= USART_CR1_UE; 
 
-    bool UART_DMA::transmit() {
+    bool UART_DMA::transmit(uint8_t *data, uint16_t size) {
     const char* data; 
     uint16_t size = 10; 
 
@@ -313,37 +302,82 @@ void UART_DMA::init() {
 }
 }
 
-void UART_DMA::receive() {
-    char buffer[20]; 
-    uint16_t size = 20; 
 
-    DMA_Stream_TypeDef* rxStream = reinterpret_cast<DMA_Stream_TypeDef*>(m_dma_stream_rx);
-    rxStream->CR &= ~DMA_SxCR_EN; 
-    rxStream->NDTR = size;
-    rxStream->M0AR = reinterpret_cast<uint32_t>(buffer);
-    rxStream->PAR = reinterpret_cast<uint32_t>(&m_UART->DR); 
-    rxStream->CR = (m_dma_channel_rx << DMA_SxCR_CHSEL_Pos) | DMA_SxCR_MINC;
-    rxStream->CR |= DMA_SxCR_EN; 
+void UART_DMA::transmit(const uint8_t* txData, uint16_t size) {
 
-    // Czekaj na zakończenie odbioru
-    while (!(rxStream->CR & DMA_SxCR_EN));
-    return true;
+    // Czekaj na zakończenie poprzedniej transmisji
+    while (m_TX_busy);
+    m_TX_busy = true;
+
+    // Wyłącz DMA Stream przed konfiguracją
+    m_dma_stream_tx->CR &= ~DMA_SxCR_EN;
+    while (m_dma_stream_tx->CR & DMA_SxCR_EN); // Czekaj na dezaktywację
+
+    // Konfiguracja źródła, celu i długości danych
+    m_dma_stream_tx->M0AR = reinterpret_cast<uint32_t>(txData); // Źródło - adres bufora
+    m_dma_stream_tx->PAR = reinterpret_cast<uint32_t>(&m_UART->DR); // Cel - rejestr danych SPI
+    m_dma_stream_tx->NDTR = size; // Długość danych
+
+    // Konfiguracja trybu DMA
+    m_dma_stream_tx->CR &= ~DMA_SxCR_DIR; // Kierunek: pamięć -> peryferium
+    m_dma_stream_tx->CR |= DMA_SxCR_MINC; // Inkrementacja adresu pamięci
+    m_dma_stream_tx->CR &= ~DMA_SxCR_PINC; // Brak inkrementacji adresu peryferium
+    m_dma_stream_tx->CR |= DMA_SxCR_TCIE; // Włącz przerwania zakończenia transferu
+
+    // Włącz DMA Stream
+    m_dma_stream_tx->CR |= DMA_SxCR_EN;
+
+    // Aktywuj SPI, aby rozpocząć transmisję
+    m_UART->CR1 |= USART_CR1_TE;
+
 }
 
-void UART_DMA::send() {
-    const char* data;  //  ###################################################################
-    while (*data) {
-        while (!(m_UART->SR & USART_SR_TXE)); 
-        m_UART->DR = *data++; 
-    return true;
+void UART_DMA::receive(uint8_t* rxData, uint16_t size) {
+    while (m_RX_busy);
+    m_RX_busy = true;
+
+    // Wyłączamy DMA Stream przed konfiguracją
+    m_dma_stream_rx->CR &= ~DMA_SxCR_EN;
+    while (m_dma_stream_rx->CR & DMA_SxCR_EN); // Czekamy na dezaktywację
+
+    // Konfigurujemy źródło, cel i długość danych
+    m_dma_stream_rx->M0AR = reinterpret_cast<uint32_t>(rxData); // Cel - adres bufora
+    m_dma_stream_rx->PAR = reinterpret_cast<uint32_t>(&m_UART->DR); // Źródło - rejestr danych SPI
+    m_dma_stream_rx->NDTR = size; // Długość danych
+
+    //DMA_CR
+    m_dma_stream_rx->CR &= ~DMA_SxCR_DIR; // Peryferium -> pamięć
+    m_dma_stream_rx->CR |= DMA_SxCR_MINC; // Inkrementacja adresu pamięci
+    m_dma_stream_rx->CR &= ~DMA_SxCR_PINC; // Brak inkrementacji adresu peryferium
+    m_dma_stream_rx->CR |= DMA_SxCR_TCIE; // Włącz przerwania zakończenia transferu
+
+    //Stream Enable
+    m_dma_stream_rx->CR |= DMA_SxCR_EN;
+
+    //uart Active
+    m_UART->CR1 |= USART_CR1_RE;
+
+}
+
+void UART_DMA::send(uint8_t data) {
+        m_UART->DR = data; 
 }
 
 
-void UART_DMA::read() {
-    while (!(m_UART->SR & USART_SR_RXNE)); 
-    char received = m_UART->DR;
-    printf(%c, received);
-    return true;
+uint8_t UART_DMA::read() {
+    return static_cast <uint8_t>(m_UART -> DR);
 }
-return 1;
+
+bool UART_DMA::isTXbusy(){
+    return m_TX_busy;
+}
+bool UART_DMA::isRXbusy(){
+    return m_RX_busy;
+}
+void UART_DMA clearTXbusy(){
+    m_TX_busy = false;
+}
+
+void UART_DMA clearRXbusy(){
+    m_RX_busy = false;
 }

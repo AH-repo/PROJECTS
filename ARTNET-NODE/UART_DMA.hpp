@@ -18,15 +18,21 @@ struct uart_config
     uint16_t RX_Pin;
     GPIO_TypeDef *TX_Port;
     uint16_t TX_Pin;
+
 };
 class UART_DMA {
 public: 
-    UART_DMA(const uart_config& usart_conf);
+    UART_DMA(const uart_config& u_conf);
     void init();
-    void transmit();
+    void transmit(uint8_t *data, uint16_t size);
     void receive();
-    void send();
-    void read();
+    void send(uint8_t data);
+    uint8_t read();
+    bool isTXbusy();
+    bool isRXbusy();
+    void clearTXbusy();
+    void clearRXbusy();
+
 private:
     USART_TypeDef *m_UART;
     DMA_TypeDef *m_dma;
@@ -40,4 +46,6 @@ private:
     GPIO_TypeDef *m_TX_Port;
     uint16_t m_TX_Pin;
     uint32_t m_fpclk;
+    volatile bool m_TX_busy;
+    volatile bool m_RX_busy;
 };
