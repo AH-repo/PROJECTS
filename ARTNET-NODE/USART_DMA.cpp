@@ -295,11 +295,15 @@ void UART_DMA::init() {
 
     double usartdiv = clock / (m_BR * (16));
     uint16_t mantissa = static_cast<uint16_t>(usartdiv / 16);  
-    if(((usartdiv - mantissa)*16)-(static_cast<uint8_t>((usartdiv - mantissa)*16)) >= 0.5){
+    if((((usartdiv - mantissa)*16)-(static_cast<uint8_t>((usartdiv - mantissa)*16)) >= 0.5) && static_cast<uint8_t>((usartdiv - mantissa)*16+1) < 16){
         uint8_t fraction = static_cast<uint8_t>((usartdiv - mantissa)*16+1); 
     }else{
     uint8_t fraction = static_cast<uint8_t>((usartdiv - mantissa)*16); 
     };
+
+    if(!(static_cast<uint8_t>((usartdiv - mantissa)*16+1) < 16)){
+        mantissa++;
+    }
 
     if (mantissa == 0 || mantissa > 0xFFF) {
         printf("Wrong BR");
